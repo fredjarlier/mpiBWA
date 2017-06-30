@@ -180,7 +180,9 @@ mpirun -n $TOTAL_PROC $pBWA_BIN_DIR/pbwa7 mem -t 1 -o $FILE_TO_WRITE $BWA_REF_TM
 Results
 -------
 
-Coming soon.
+Here results wo obtain from test realized with TGCC (Très Grand Centre de Calcul - Bruyères le Chatel - France).
+
+![img](Results_TGCC_Broadwell.jpg)
 
 Remarks
 -------
@@ -218,7 +220,7 @@ Li H. and Durbin R. (2010) Fast and accurate long-read alignment with Burrows-Wh
 
 Li H. (2013) Aligning sequence reads, clone sequences and assembly contigs with BWA-MEM. arXiv:1303.3997v1 [q-bio.GN]
 
-Latham R. et al. (2007)  Implementing MPI-IO Atomic Mode and Shared File Pointers Using MPI One-Sided Communication Authors [http://www.mcs.anl.gov/~thakur/papers/rmaops.pdf]
+Latham R. et al. (2007)  Implementing MPI-IO Atomic Mode and Shared File Pointers Using MPI One-Sided Communication Authors
 -------
 
 The program has been developed by 
