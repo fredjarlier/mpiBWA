@@ -1,7 +1,7 @@
 
-You are in the FULLMPI branch of the mpiBWA project
-In this branch we all the io and communications are managed with MPI routine.
-If you are equiped with low latency network and parallele file system prefer this branch over the main branch.
+You are in the LAZYCHUNK branch of the mpiBWA project
+In this branch we don't precompute offset for the chunk of fatsq reads.
+This is fast but less precise.
 
 Release notes
 ------------

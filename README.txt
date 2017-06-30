@@ -1,7 +1,7 @@
 
-You are in the FULLMPI branch of the mpiBWA project
-In this branch we all the io and communications are managed with MPI routine.
-If you are equiped with low latency network and parallele file system prefer this branch over the main branch.
+You are in the LAZYCHUNK branch of the mpiBWA project
+In this branch we don't precompute offset for the chunk of fatsq reads.
+This is fast but less precise.
 
 Release notes
 ------------
@@ -27,7 +27,6 @@ We have tested 2 offset workers for 80 aligners with a NFS and low ethernet with
  
 This version has a low adherence with MPI in order to be compatible with NFS and low ethernet connectors.
 Tested with openMPI 2.1.1.
-
 
 Release 1.0 from 13/06/2017
 
