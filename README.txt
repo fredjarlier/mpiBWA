@@ -1,3 +1,8 @@
+
+You are in the FULLMPI branch of the mpiBWA project
+In this branch we all the io and communications are managed with MPI routine.
+If you are equiped with low latency network and parallele file system prefer this branch over the main branch.
+
 Release notes
 ------------
 
@@ -67,8 +72,8 @@ You need a C compiler as required for classic BWA program.
 You need to install a version of MPI.
 
 You need a mpi compiler too. to check your mpi installation tell in a command window whereis mpirun, normally it is installed in /usr/bin/mpirun.
-This program runs on supercomputer architecture and supports also NFS file system. 
-A classic 1Gb or 10Gb network is sufficient.
+
+You need a low latency network and a parallel file system to use this branch
 
 Your reads should be paired or single.
 
@@ -175,9 +180,7 @@ mpirun -n $TOTAL_PROC $pBWA_BIN_DIR/pbwa7 mem -t 1 -o $FILE_TO_WRITE $BWA_REF_TM
 Results
 -------
 
-Here results wo obtain from test realized with TGCC (Très Grand Centre de Calcul - Bruyères le Chatel - France).
-
-![img](Results_TGCC_Broadwell.jpg)
+Coming soon.
 
 Remarks
 -------

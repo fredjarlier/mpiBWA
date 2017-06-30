@@ -61,8 +61,8 @@
 
 /* Default read size */
 #define READSIZE (10UL * 1024 * 1024)
-#define MAGIC_UNLOCK_TAG 0xBEEF
 #define NUM_PROC_OFFSET 2
+#define MAGIC_UNLOCK_TAG 0xBEEF
 
 #define MPI_ASSERT(fx) do { \
   assert(fx == MPI_SUCCESS); \
@@ -253,178 +253,6 @@ void rma_mutex_unlock_offset(rma_mutex_t *m)
     MPI_ASSERT(MPI_Send(NULL, 0, MPI_BYTE, next, MAGIC_UNLOCK_TAG, m->comm));
 }
 
-/*
- * We create a mutex for writing
- */
-static void create_req_buffer_type_writing(rma_mutex_t *new)
-{
-  int ret, nblock, *len, *dsp;
-
-  new->req_slice_type = MPI_DATATYPE_NULL;
-
-  len = NULL;
-  dsp = NULL;
-
-  if (new->rank == 0 || new->rank == new->size - 1)
-    nblock = 1;
-  else
-    nblock = 2;
-
-  len = calloc(nblock, sizeof(int));
-  assert(len != NULL);
-  dsp = calloc(nblock, sizeof(int));
-  assert(dsp != NULL);
-
-  if (new->rank == 0) {
-    len[0] = new->size - 1;
-    dsp[0] = 1;
-  } else if (new->rank == new->size - 1) {
-    len[0] = new->size - 1;
-    dsp[0] = 0;
-  } else {
-    len[0] = new->rank;
-    dsp[0] = 0;
-    len[1] = new->size - 1 - new->rank;
-    dsp[1] = new->rank + 1;
-  }
-
-  MPI_ASSERT(MPI_Type_indexed(nblock, len, dsp, MPI_BYTE, &new->req_slice_type));
-  MPI_ASSERT(MPI_Type_commit(&new->req_slice_type));
-
-  free(len);
-  free(dsp);
-}
-
-/**
- * Initialize the RMA mutex `m` owned by rank `owner` of communcator `comm`.
- * This call is collective.
- */
-void rma_mutex_init_writing(rma_mutex_t *m, MPI_Comm comm, int owner)
-{
-  int ret;
-  MPI_Aint req_size;
-  rma_mutex_t new;
-
-  new.owner = owner;
-  new.comm = comm;
-
-  new.req = NULL;
-  new.req_slice_buffer = NULL;
-
-  MPI_ASSERT(MPI_Comm_rank(new.comm, &new.rank));
-  MPI_ASSERT(MPI_Comm_size(new.comm, &new.size));
-
-  new.req_slice_buffer = malloc(new.size);
-  assert(new.req_slice_buffer != NULL);
-
-  create_req_buffer_type_writing(&new);
-
-  if (new.rank == new.owner) {
-    req_size = new.size;
-    MPI_ASSERT(MPI_Alloc_mem(req_size, MPI_INFO_NULL, &new.req));
-    bzero(new.req, req_size);
-  } else {
-    req_size = 0;
-  }
-
-  MPI_ASSERT(MPI_Win_create(new.req, req_size, 1, MPI_INFO_NULL, new.comm, &new.win));
-
-  /* lookin good - safe to modify argument */
-  memcpy(m, &new, sizeof(rma_mutex_t));
-}
-
-/**
- * Free resources associated with the RMA mutex `m`. This call is collective.
- */
-void rma_mutex_free_writing(rma_mutex_t *m)
-{
-  int ret;
-
-  MPI_ASSERT(MPI_Win_free(&m->win)); /* collective */
-
-  if (m->rank == m->owner)
-    MPI_ASSERT(MPI_Free_mem(m->req));
-
-  MPI_ASSERT(MPI_Type_free(&m->req_slice_type));
-
-  free(m->req_slice_buffer);
-}
-
-/**
- * Acquire the lock associated with RMA mutex `m`.
- */
-void rma_mutex_lock_writing(rma_mutex_t *m)
-{
-  int i, contested, ret;
-  uint8_t one = 1;
-
-  /* exclusive lock
-   * .. get full req_buffer
-   * .. set my entry to 1 */
-  MPI_ASSERT(MPI_Win_lock(MPI_LOCK_EXCLUSIVE, m->owner, 0, m->win));
-  MPI_ASSERT(MPI_Get(m->req_slice_buffer, m->size - 1, MPI_BYTE, m->owner, 0, 1, m->req_slice_type, m->win));
-  MPI_ASSERT(MPI_Put(&one, 1, MPI_BYTE, m->owner, m->rank, 1, MPI_BYTE, m->win));
-  MPI_ASSERT(MPI_Win_unlock(m->owner, m->win));
-
-  /* lock obtained? */
-  contested = 0;
-  for (i = 0; i < m->size - 1; i++)
-    if (m->req_slice_buffer[i]) {
-      contested = 1;
-      break;
-    }
-
-  /* no, it's contested - wait for it ... */
-  if (contested)
-    MPI_ASSERT(MPI_Recv(NULL, 0, MPI_BYTE, MPI_ANY_SOURCE, MAGIC_UNLOCK_TAG, m->comm, MPI_STATUS_IGNORE));
-}
-
-/**
- * Non-public: Once the `req_slice_buffer` field of mutex `m` has been
- * populated, determine the next rank to receive the lock.
- * Return value: rank on the next process to get the lock (m->rank if no rank is
- * currently waiting).
- */
-static int next_rank_writing(rma_mutex_t *m)
-{
-  int i, j, next;
-  next = m->rank;
-  for (i = 0; i < m->size - 1; i++) {
-    j = (m->rank + i) % (m->size - 1);
-    if (m->req_slice_buffer[j]) {
-      if (j < m->rank)
-        next = j;
-      else
-        next = j + 1;
-      break;
-    }
-  }
-  return next;
-}
-
-/**
- * Release the lock associated with RMA mutex `m`.
- */
-void rma_mutex_unlock_writing(rma_mutex_t *m)
-{
-  int next, ret;
-  uint8_t zero = 0;
-
-  /* exclusive lock
-   * .. get new full req_buffer
-   * .. set my entry to 0 */
-  MPI_ASSERT(MPI_Win_lock(MPI_LOCK_EXCLUSIVE, m->owner, 0, m->win));
-  MPI_ASSERT(MPI_Get(m->req_slice_buffer, m->size - 1, MPI_BYTE, m->owner, 0, 1, m->req_slice_type, m->win));
-  MPI_ASSERT(MPI_Put(&zero, 1, MPI_BYTE, m->owner, m->rank, 1, MPI_BYTE, m->win));
-  MPI_ASSERT(MPI_Win_unlock(m->owner, m->win));
-
-  /* who gets it next? */
-  next = next_rank_writing(m);
-
-  /* someone ... give it to them ... */
-  if (next != m->rank)
-    MPI_ASSERT(MPI_Send(NULL, 0, MPI_BYTE, next, MAGIC_UNLOCK_TAG, m->comm));
-}
 
 int main(int argc, char *argv[]) {
 	double bef, aft;
@@ -433,9 +261,7 @@ int main(int argc, char *argv[]) {
 	char *buffer_r1, *buffer_r2;
 	buffer_r1 = buffer_r2 = NULL;
 	char *buffer_out     = NULL;
-
-	int fd_tmp;
-	MPI_File fd_tmp1, fd_tmp2;
+	MPI_File fd_tmp, fd_tmp1;
 	uint8_t *a, *addr, *addr_map;
 	size_t rlen_r1, rlen_r2;
 
@@ -467,7 +293,8 @@ int main(int argc, char *argv[]) {
 	MPI_Comm comm_shr;
 
 	MPI_File fh_map;
-	int fh_r1, fh_r2, fh_r3, fh_r4,fh_out;
+	MPI_File fh_r1, fh_r2, fh_r3, fh_r4, fh_out;
+
 	MPI_Offset m, size_map, size_tot;
 	MPI_Status status;
 	MPI_Win win_shr = NULL;
@@ -488,7 +315,6 @@ int main(int argc, char *argv[]) {
 	const char *mode = NULL;
 
 	rma_mutex_t mutex_offset;
-	rma_mutex_t mutex_writing;
 
 	char *progname = basename(argv[0]);
 
@@ -847,30 +673,47 @@ int main(int argc, char *argv[]) {
 	aft = MPI_Wtime();
 	xfprintf(stderr, "%s: synched processes (%.02f)\n", __func__, aft - bef);
 
-	/* Open input files */
-
-	/* Open temporary offset file in appending mode*/
-	fd_tmp = open(file_tmp, O_RDWR|O_CREAT|O_TRUNC, 0666);
-	assert(fd_tmp != -1);
-
 	rlen_r1 = rlen_r2 = READSIZE * opt->n_threads;
 
 	seqs = NULL;
 	uint64_t bases = opt->chunk_size * opt->n_threads;
 	curr[0] =  curr[1] = curr[2] = curr[3] =  curr[4] = curr[5] = 0;
 	int init;
-	size_t start_off_r1 = 0;
-	size_t start_off_r2 = 0;
+	off_t start_off_r1 = 0;
+	off_t start_off_r2 = 0;
+
+	/* Open temporary offset file in appending mode*/
+	res = MPI_File_open(MPI_COMM_WORLD, file_tmp, MPI_MODE_RDWR | MPI_MODE_CREATE, MPI_INFO_NULL, &fd_tmp);
+	assert(res == MPI_SUCCESS);
+
+	/* initialize temporary offset file */
+	if (rank_num == 0){
+
+		res = MPI_File_write_at(fd_tmp, 0, curr, 6, MPI_LONG_LONG_INT, &status);
+		assert(res == MPI_SUCCESS);
+		res = MPI_File_sync(fd_tmp) ;
+		assert(res == MPI_SUCCESS);
+	}
 
 	/* Open input files */
-	if (file_r1 != NULL) fh_r1 = open(file_r1, O_RDWR, 0666);
-	if (file_r2 != NULL) fh_r2 = open(file_r2, O_RDWR, 0666);
-	if (file_r1 != NULL) fh_r3 = open(file_r1, O_RDWR, 0666);
-	if (file_r2 != NULL) fh_r4 = open(file_r2, O_RDWR, 0666);
+	res = MPI_File_open(MPI_COMM_WORLD, file_r1, MPI_MODE_RDWR, MPI_INFO_NULL, &fh_r1);
+	assert(res == MPI_SUCCESS);
 
-	//everybody initialyze the mutex for writing
-	rma_mutex_init_writing(&mutex_writing, MPI_COMM_WORLD, 0);
+	res = MPI_File_open(MPI_COMM_WORLD, file_r2, MPI_MODE_RDWR, MPI_INFO_NULL, &fh_r2);
+	assert(res == MPI_SUCCESS);
+
+	res = MPI_File_open(MPI_COMM_WORLD, file_r1, MPI_MODE_RDWR, MPI_INFO_NULL, &fh_r3);
+	assert(res == MPI_SUCCESS);
+
+	res = MPI_File_open(MPI_COMM_WORLD, file_r2, MPI_MODE_RDWR, MPI_INFO_NULL, &fh_r4);
+	assert(res == MPI_SUCCESS);
+
+	/* Open output file */
+	res = MPI_File_open(MPI_COMM_WORLD, file_out, MPI_MODE_WRONLY|MPI_MODE_APPEND, MPI_INFO_NULL, &fh_out);
+	assert(res == MPI_SUCCESS);
+
 	rma_mutex_init_offset(&mutex_offset, MPI_COMM_WORLD, 0);
+
 	MPI_Barrier(MPI_COMM_WORLD);
 
 	size_t total_line_read_offset_proc = 0;
@@ -904,42 +747,45 @@ int main(int argc, char *argv[]) {
 			uint64_t seqs_r1, base_r1, seqs_r2, base_r2;
 			ptrdiff_t diff_r1, diff_r2;
 			bef = MPI_Wtime();
-			ssiz = pread(fd_tmp, curr, csiz, 0);
-			assert(ssiz == csiz || ssiz == 0);
+
+			res = MPI_File_read_at(fd_tmp, 0, curr, 6, MPI_LONG_LONG_INT, &status);
+			assert(res == MPI_SUCCESS);
+
 			start_off_r1 = curr[0] + curr[1];
 			start_off_r2 = curr[3] + curr[4];
 
 			/* Read current chunk data to be processed ... */
-			bef = MPI_Wtime();
 	again:
+
 			if (file_r1 != NULL) {
 
 				if (buffer_r1) buffer_r1 = (char *)realloc(buffer_r1, rlen_r1 + 1);
-				else buffer_r1 = malloc(rlen_r1 + 1);
+				else buffer_r1 = malloc(rlen_r1+1);
 				buffer_r1[rlen_r1] = '\0';
 				assert(buffer_r1 != NULL);
-				ssize_t ssz = pread(fh_r1, buffer_r1, rlen_r1, start_off_r1 );
-				assert( ssz != -1);
+				res = MPI_File_read_at(fh_r1, start_off_r1, buffer_r1, (int)rlen_r1, MPI_CHAR, &status);
+				assert(res == MPI_SUCCESS);
+				res = MPI_Get_count(&status, MPI_CHAR, &count_r1);
+				assert(res == MPI_SUCCESS);
 				assert(*buffer_r1 == '@');
-				count_r1 = (int)ssz;
 			}
 
 			if (file_r2 != NULL) {
 
 				if (buffer_r2) buffer_r2 = (char *)realloc(buffer_r2, rlen_r2 + 1);
-				else buffer_r2 = malloc(rlen_r2 + 1);
+				else buffer_r2 = malloc(rlen_r2+1);
 				buffer_r2[rlen_r2] = '\0';
 				assert(buffer_r2 != NULL);
-				ssize_t ssz = pread(fh_r2, buffer_r2, rlen_r2, start_off_r2 );
-				assert( ssz != -1);
+				res = MPI_File_read_at(fh_r2, start_off_r2, buffer_r2, (int)rlen_r2, MPI_CHAR, &status);
+				assert(res == MPI_SUCCESS);
+				res = MPI_Get_count(&status, MPI_CHAR, &count_r2);
+				assert(res == MPI_SUCCESS);
 				assert(*buffer_r2 == '@');
-				count_r2 = (int)ssz;
 			}
 
-
 			/* Check for expected base count */
-			b1 = buffer_r1; size_r1 = count_r1; line_r1 = 0; base_r1 = 0;
-			b2 = buffer_r2; size_r2 = count_r2; line_r2 = 0; base_r2 = 0;
+			b1 = buffer_r1; size_r1 = (size_t)count_r1; line_r1 = 0; base_r1 = 0;
+			b2 = buffer_r2; size_r2 = (size_t)count_r2; line_r2 = 0; base_r2 = 0;
 			while (1) {
 				off_t val1 = 0;
 				off_t val2 = 0;
@@ -968,9 +814,9 @@ int main(int argc, char *argv[]) {
 			}
 
 			assert(line_r2 == line_r1);
-
 			full_r1 = (file_r1 != NULL) ? count_r1 == rlen_r1 : 0;
 			full_r2 = (file_r2 != NULL) ? count_r2 == rlen_r2 : 0;
+
 			if ((full_r1 || full_r2) && ((base_r1 + base_r2) < bases)) {
 					rlen_r1 += READSIZE * opt->n_threads;
 					rlen_r2 += READSIZE * opt->n_threads;
@@ -980,6 +826,11 @@ int main(int argc, char *argv[]) {
 			assert(size_r1 <= rlen_r1);
 			size_r2 = b2 - buffer_r2;
 			assert(size_r2 <= rlen_r2);
+			aft = MPI_Wtime();
+
+			assert(size_r1 == size_r2);
+
+
 			total_line_read_offset_proc += line_r2;
 			total_line_read_offset_proc += line_r1;
 
@@ -996,8 +847,10 @@ int main(int argc, char *argv[]) {
 			curr[4] = size_r2;
 			curr[5] = line_r2;
 
-			ssiz = pwrite(fd_tmp, curr, csiz,0);
-			assert(ssiz == csiz);
+			res = MPI_File_write_at(fd_tmp, 0, curr, 6, MPI_LONG_LONG_INT, &status);
+			assert(res == MPI_SUCCESS);
+			res = MPI_File_sync(fd_tmp) ;
+			assert(res == MPI_SUCCESS);
 
 			rma_mutex_unlock_offset(&mutex_offset);
 
@@ -1005,13 +858,14 @@ int main(int argc, char *argv[]) {
 			res = MPI_Recv(&consumer, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 			assert(res == MPI_SUCCESS);
 			MPI_Datatype send_buf;
-			MPI_Type_contiguous (6, MPI_LONG_LONG_INT, &send_buf);
-			MPI_Type_commit(&send_buf);
+			res = MPI_Type_contiguous (6, MPI_LONG_LONG_INT, &send_buf);
+			assert(res == MPI_SUCCESS);
+			res = MPI_Type_commit(&send_buf);
+			assert(res == MPI_SUCCESS);
 			res = MPI_Send(&curr , 1, send_buf, consumer, 0, MPI_COMM_WORLD);
 			assert(res == MPI_SUCCESS);
 			res = MPI_Type_free( &send_buf);
 			assert(res == MPI_SUCCESS);
-
 			//should not come here!!
 			if ((file_r1 != NULL && size_r1 == 0))
 				fprintf(stderr, "[M::%s] sequences count differ between R1 and R2\n", __func__);
@@ -1019,6 +873,7 @@ int main(int argc, char *argv[]) {
 		}//end while(1)
 
 		//here we shall tell the jobs we are finished
+
 		int t=0;
 		size_t curr_zero[6];
 		curr_zero[0] = 0;
@@ -1029,16 +884,20 @@ int main(int argc, char *argv[]) {
 		curr_zero[5] = 0;
 
 		do{
+
 			res = MPI_Recv(&consumer, 1, MPI_INT, MPI_ANY_SOURCE, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 			assert(res == MPI_SUCCESS);
 			//then we send to the consumer our offsets
 			MPI_Datatype send_buf;
-			MPI_Type_contiguous (6, MPI_LONG_LONG_INT, &send_buf);
-			MPI_Type_commit(&send_buf);
+			res = MPI_Type_contiguous (6, MPI_LONG_LONG_INT, &send_buf);
+			assert(res == MPI_SUCCESS);
+			res = MPI_Type_commit(&send_buf);
+			assert(res == MPI_SUCCESS);
 			res = MPI_Send(&curr_zero , 1, send_buf, consumer, 0, MPI_COMM_WORLD);
 			assert(res == MPI_SUCCESS);
-			res = MPI_Type_free( &send_buf);
+			res = MPI_Type_free(&send_buf);
 			assert(res == MPI_SUCCESS);
+
 			t++;
 		}while (t < num_consumer);
 	}
@@ -1052,14 +911,14 @@ int main(int argc, char *argv[]) {
 
 		while (1) {
 
-			assert(res == MPI_SUCCESS);
 			res = MPI_Send(&rank_num , 1, MPI_INT, prov, 0, MPI_COMM_WORLD);
 			assert(res == MPI_SUCCESS);
 
 			MPI_Datatype recv_buf;
-			MPI_Type_contiguous (6, MPI_LONG_LONG_INT, &recv_buf);
-			MPI_Type_commit(&recv_buf);
-
+			res = MPI_Type_contiguous (6, MPI_LONG_LONG_INT, &recv_buf);
+			assert(res == MPI_SUCCESS);
+			res = MPI_Type_commit(&recv_buf);
+			assert(res == MPI_SUCCESS);
 			//we recieve the provider offsets
 			res = MPI_Recv(&curr, 1, recv_buf, prov, 0, MPI_COMM_WORLD, &status);
 			assert(res == MPI_SUCCESS);
@@ -1068,11 +927,6 @@ int main(int argc, char *argv[]) {
 			assert(count == 1);
 			res = MPI_Type_free( &recv_buf );
 			assert(res == MPI_SUCCESS);
-
-			/*
-			fprintf(stderr, "Rank %d: recieve curr[0] = %zu :: curr[1] = %zu :: curr[2] = %zu :: curr[3] = %zu :: curr[4] = %zu ::"
-								"curr[5] = %zu \n", rank_num, curr[0], curr[1], curr[2], curr[3], curr[4], curr[5]);
-			*/
 
 			if (curr[4] == 0 || curr[1] == 0 || curr[2] == 0 || curr[5] == 0) break; //no line to read it's finished
 			bef = MPI_Wtime();
@@ -1084,9 +938,12 @@ int main(int argc, char *argv[]) {
 				else buffer_r1 = malloc(curr[1]+1);
 				assert(buffer_r1 != NULL);
 				buffer_r1[curr[1]] = '\0';
-				size_r1 = pread(fh_r3, buffer_r1, curr[1], curr[0]);
-				assert(size_r1 == curr[1]);
-				assert( size_r1 != -1);
+
+				res = MPI_File_read_at(fh_r3, (MPI_Offset)curr[0], buffer_r1, (int)curr[1], MPI_CHAR, &status);
+				assert(res == MPI_SUCCESS);
+				res = MPI_Get_count(&status, MPI_CHAR, &count);
+				size_r1 = (size_t)count;
+				assert(res == MPI_SUCCESS);
 				assert(*buffer_r1 == '@');
 			}
 			if (file_r2 != NULL) {
@@ -1095,9 +952,12 @@ int main(int argc, char *argv[]) {
 				else buffer_r2 = malloc(curr[4]+1);
 				assert(buffer_r2 != NULL);
 				buffer_r2[curr[4]] = '\0';
-				size_r2 = pread(fh_r4, buffer_r2, curr[4], curr[3]);
-				assert(size_r2 == curr[4]);
-				assert(size_r2 != -1);
+
+				res = MPI_File_read_at(fh_r4, (MPI_Offset)curr[3], buffer_r2, (int)curr[4], MPI_CHAR, &status);
+				assert(res == MPI_SUCCESS);
+				res = MPI_Get_count(&status, MPI_CHAR, &count);
+				size_r2 = (size_t)count;
+				assert(res == MPI_SUCCESS);
 				assert(*buffer_r2 == '@');
 			}
 
@@ -1182,6 +1042,9 @@ int main(int argc, char *argv[]) {
 
 			total_line_read_align_proc += curr[5];
 			total_line_read_align_proc += curr[2];
+
+			aft = MPI_Wtime();
+
 			/* Process sequences */
 			bef = MPI_Wtime();
 			mem_process_seqs(opt, indix.bwt, indix.bns, indix.pac, 0, (int)(seqs_r1+seqs_r2), seqs, pes0);
@@ -1190,8 +1053,6 @@ int main(int argc, char *argv[]) {
 			/* FIXME: Write results */
 			bef = MPI_Wtime();
 			localsize = 0;
-
-			bef = MPI_Wtime();
 
 			for (n = 0; n < seqs_r1+seqs_r2; n++) {
 				/* Reuse .l_seq to store SAM line length to avoid multiple strlen() calls */
@@ -1210,29 +1071,22 @@ int main(int argc, char *argv[]) {
 				p += seqs[n].l_seq;
 				free(seqs[n].sam);
 			}
-			//aft = MPI_Wtime();
-			//fprintf(stderr, "Rank %d: time to concatenate (%.02f) \n", rank_num, aft - bef);
 
+			res = MPI_File_write_shared(fh_out, buffer_out, (int)localsize, MPI_CHAR, &status);
+			assert(res == MPI_SUCCESS);
+			res = MPI_Get_count(&status, MPI_CHAR, &count);
+			assert(res == MPI_SUCCESS);
+			assert(count == (int)localsize);
 
-			//then we request the lock
-			rma_mutex_lock_writing(&mutex_writing);
-			fh_out = open(file_out, O_WRONLY|O_APPEND|O_CREAT, 0666);
-			assert(fh_out != -1);
-			lseek(fh_out, 0, SEEK_END);
-			ssize_t nr = write(fh_out, buffer_out, localsize);
-			assert((size_t)nr == localsize);
-			total_writen_by_proc += nr;
-			res = close(fh_out);
-			assert(res != -1);
-			write_flag = 1;
-			rma_mutex_unlock_writing(&mutex_writing);
 			free(seqs);
+
 		}
 		fprintf(stderr, "Rank %d: finish aligning \n", rank_num);
 	}
 
 	res = MPI_Barrier(MPI_COMM_WORLD);
 	assert(res == MPI_SUCCESS);
+
 
 	/*
 	 * For DEBUG
@@ -1245,23 +1099,23 @@ int main(int argc, char *argv[]) {
 		fprintf(stderr, "Rank %d: total line read proc offset = %zu \n", rank_num, total_line_read_offset_proc);
 
 	if (total_line_read_align_proc)
-	fprintf(stderr, "Rank %d: total line read proc align = %zu \n", rank_num,  total_line_read_align_proc);
+		fprintf(stderr, "Rank %d: total line read proc align = %zu \n", rank_num,  total_line_read_align_proc);
 	*/
 
-
-	rma_mutex_free_writing(&mutex_writing);
 	rma_mutex_free_offset(&mutex_offset);
 
-	res = close(fh_r4);
-	assert(res != -1);
-	res = close(fh_r3);
-	assert(res != -1);
-	res = close(fh_r1);
-	assert(res != -1);
-	res = close(fh_r2);
-	assert(res != -1);
-	res = close(fd_tmp);
-	assert(res != -1);
+	res = MPI_File_close(&fh_r1);
+	assert(res == MPI_SUCCESS);
+	res = MPI_File_close(&fh_r2);
+	assert(res == MPI_SUCCESS);
+	res = MPI_File_close(&fd_tmp);
+	assert(res == MPI_SUCCESS);
+	res = MPI_File_close(&fh_r4);
+	assert(res == MPI_SUCCESS);
+	res = MPI_File_close(&fh_r3);
+	assert(res == MPI_SUCCESS);
+	res = MPI_File_close(&fh_out);
+	assert(res == MPI_SUCCESS);
 
 	if (buffer_out) free(buffer_out);
 	if (buffer_r2)  free(buffer_r2);
@@ -1273,7 +1127,6 @@ int main(int argc, char *argv[]) {
 
 	res = MPI_Win_free(&win_shr);
 	assert(res == MPI_SUCCESS);
-
 	res = MPI_Comm_free(&comm_shr);
 	assert(res == MPI_SUCCESS);
 
