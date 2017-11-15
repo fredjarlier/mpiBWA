@@ -3,12 +3,23 @@ You are in the LAZYCHUNK branch of the mpiBWA project
 In this branch we don't precompute offset for the chunk of fatsq reads.
 This is fast but less precise.
 
+In memory of Nicolas Joly.
+
 Release notes
 ------------
 
-First we would like to think about Nicolas Joly who passed away last month.
-Without him none of this work could have been achieved. 
-It's sad, we lost a great man. Thanks for all and rest in peace Nicolas.
+Release 1.0 from 15/11/2017
+
+Changes in LAZYCHUNCK branch
+
+1) Due to mmap of the previous version the virtual memory may be big when the fastq file is large.
+Some scheduler like Torque doesn't like this. We review the algorithm of computing chuncks.
+first we divide the file in window of size (number of jobs) * 1Gb. On each window we approximate chuncks of 10 mega bases.
+this way the virtual memory stay low. 
+ 
+2) We also saw problem on some architecture with MPI file read shared we replace it with MPI file read at. 
+
+3) We have also other projects and we are looking for people willing to help us for developments and tests. Don't hesitate to contact me at frederic.jarlier@curie.fr 
 
 Release 1.0 from 30/06/2017
 
@@ -221,6 +232,7 @@ Li H. and Durbin R. (2010) Fast and accurate long-read alignment with Burrows-Wh
 Li H. (2013) Aligning sequence reads, clone sequences and assembly contigs with BWA-MEM. arXiv:1303.3997v1 [q-bio.GN]
 
 Latham R. et al. (2007)  Implementing MPI-IO Atomic Mode and Shared File Pointers Using MPI One-Sided Communication Authors
+
 -------
 
 The program has been developed by 
