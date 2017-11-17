@@ -8,6 +8,13 @@ In memory of Nicolas Joly.
 Release notes
 ------------
 
+Release 1.0 from 17/11/2017
+
+Changes in  LAZYCHUNCK branch
+
+1) Improvement of the algorithm for window sizing.
+2) Change the number of bases for the estimation line 541. 
+
 Release 1.0 from 15/11/2017
 
 Changes in LAZYCHUNCK branch

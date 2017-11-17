@@ -760,8 +760,6 @@ int main(int argc, char *argv[]) {
 		// end loop computing chuncks		
 		assert(total_window_sz == stat_r1.st_size);
 		assert(close(fd_in1) != -1);
-		
-		malloc_trim(0);
 		fprintf(stderr, "%s: rank %d : total chunks = %zu \n", __func__, rank_num, total_chuncks);
 		
 		MPI_Offset file_offset_sz = 0;
@@ -814,15 +812,13 @@ int main(int argc, char *argv[]) {
 			// problem encountered with the read shared does not seem to work on NFS 
 			// in replacement we do a a read_at
 			offset_read = (rank_num * elmt_sz) + chunck_num * delta;
-			//fprintf(stderr, "%s: rank %d : tmp offset[0] = %zu\n", __func__, rank_num, offset_read );
 			if ( offset_read > file_offset_sz) break;
-			//fprintf(stderr, "%s: rank %d : offset in file tmp= %zu\n", __func__, rank_num, offset_read );
 			res = MPI_File_read_at(fh_tmp1, offset_read, coff, 2, MPI_OFFSET, &status);
 			assert(res == MPI_SUCCESS);
 			res = MPI_Get_count(&status, MPI_OFFSET, &count);
 			assert(res == MPI_SUCCESS);
-			if ( coff[0] < previous_offset_chunck ) break;
-			if ( coff[1] == 0 ) break;
+			//if ( coff[0] < previous_offset_chunck ) break;
+			//if ( coff[1] == 0 ) break;
 			//fprintf(stderr, "%s: rank %d : read offset[0] = %zu\n", __func__, rank_num, coff[0] );
 			//fprintf(stderr, "%s: rank %d : read offset[1] = %zu\n", __func__, rank_num, coff[1] );
 			if (count == 0) break;
