@@ -538,7 +538,7 @@ int main(int argc, char *argv[]) {
 			while (q < e && *q != '\n') q++; slen = q - s + 1;
 		
 			/* Split local buffer in chunks of 100000000 bases */
-			chunck_sz = 8000000 / blen * slen;
+			chunck_sz = 80000000 / blen * slen;
 			//chunck_sz = 1000000 / blen * slen;
 			chunck_sz *= opt->n_threads;
 			chunck_sz /= files; 		
@@ -781,7 +781,7 @@ int main(int argc, char *argv[]) {
 		res = MPI_File_open(MPI_COMM_WORLD, file_out, MPI_MODE_WRONLY|MPI_MODE_APPEND, MPI_INFO_NULL, &fh_out);
 		assert(res == MPI_SUCCESS);
 			
-		fprintf(stderr, "%s: rank %d : file_offset_sz= %zu \n", __func__, rank_num, file_offset_sz);
+		//fprintf(stderr, "%s: rank %d : file_offset_sz= %zu \n", __func__, rank_num, file_offset_sz);
 		MPI_Barrier(MPI_COMM_WORLD);
 		if (file_r1 != NULL) {
 			res = MPI_File_open(MPI_COMM_WORLD, file_r1, MPI_MODE_RDONLY, MPI_INFO_NULL, &fh_r1);
@@ -811,11 +811,10 @@ int main(int argc, char *argv[]) {
 
 			/* Get current chunk offset and size ... */
 			//res = MPI_File_read_shared(fh_tmp1, coff, 2, MPI_OFFSET, &status);
-			
 			// problem encountered with the read shared does not seem to work on NFS 
 			// in replacement we do a a read_at
 			offset_read = (rank_num * elmt_sz) + chunck_num * delta;
-			fprintf(stderr, "%s: rank %d : tmp offset[0] = %zu\n", __func__, rank_num, offset_read );
+			//fprintf(stderr, "%s: rank %d : tmp offset[0] = %zu\n", __func__, rank_num, offset_read );
 			if ( offset_read > file_offset_sz) break;
 			//fprintf(stderr, "%s: rank %d : offset in file tmp= %zu\n", __func__, rank_num, offset_read );
 			res = MPI_File_read_at(fh_tmp1, offset_read, coff, 2, MPI_OFFSET, &status);
@@ -824,8 +823,8 @@ int main(int argc, char *argv[]) {
 			assert(res == MPI_SUCCESS);
 			if ( coff[0] < previous_offset_chunck ) break;
 			if ( coff[1] == 0 ) break;
-			fprintf(stderr, "%s: rank %d : read offset[0] = %zu\n", __func__, rank_num, coff[0] );
-			fprintf(stderr, "%s: rank %d : read offset[1] = %zu\n", __func__, rank_num, coff[1] );
+			//fprintf(stderr, "%s: rank %d : read offset[0] = %zu\n", __func__, rank_num, coff[0] );
+			//fprintf(stderr, "%s: rank %d : read offset[1] = %zu\n", __func__, rank_num, coff[1] );
 			if (count == 0) break;
 			assert(count == 2);
 			/* Read sequence datas ... */
@@ -970,7 +969,7 @@ int main(int argc, char *argv[]) {
 			previous_offset_chunck = coff[0];
 
 		}
-		fprintf(stderr, "%s: rank : %d : finish aligning = \n", __func__, rank_num);
+		//fprintf(stderr, "%s: rank : %d : finish aligning = \n", __func__, rank_num);
 		free(coff);
 		free(buffer_r1);
 		free(buffer_r2);
