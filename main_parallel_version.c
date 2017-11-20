@@ -114,7 +114,7 @@ int main(int argc, char *argv[]) {
 	MPI_Offset *coff, m, size_map, size_tot;
 	MPI_Status status;
 	MPI_Win win_shr;
-
+	int to_free = 0;
 	mem_opt_t *opt, opt0;
 	mem_pestat_t pes[4], *pes0 = NULL;
 	bwaidx_t indix;
@@ -585,7 +585,9 @@ int main(int argc, char *argv[]) {
 			buffer_r0[tmp_sz] = '\0';	
 			if ( rank_num == 0 ){
 			
-				for (k = 0; k < (number_of_window + 1); k++){ window_offsets[k] = window_sz * k;}
+				for (k = 0; k < (number_of_window + 1); k++){
+					 window_offsets[k] = window_sz * k;
+				}
 				window_offsets[number_of_window + 1] = file_sz;			
 				/* now we adjust the offset of the window to start at the beginning of a read*/ 
 				for (k = 1; k < (number_of_window + 1); k++){
@@ -670,7 +672,9 @@ int main(int argc, char *argv[]) {
 				assert( *p == '@');
 				//we update the global offset in the fastq file			
 				globoff  += p - buffer_r1;
+				free(buffer_r1);
 			}			
+			
 			//we save the new global offset in a vector alloff
 			curoff = alloff + proc_num; 
 			*curoff =window_offsets[k+1] ;
@@ -678,12 +682,14 @@ int main(int argc, char *argv[]) {
 			assert(res == MPI_SUCCESS);
 			curoff = alloff + rank_num; 
 			locsiz = *(curoff+1) - *(curoff);
+			to_free = 0;
+			if (locsiz > 0) to_free = 1; 
+			else to_free = 0;
 			
-			/* in case a rank has nothing to process it writes nothing*/
 			if ( locsiz != 0){ 
 				/*we free buffer_r1 and reload it*/						
 				size_t total_chucks_sz = locsiz;
-				buffer_r1 = realloc(buffer_r1, locsiz + 1);
+				buffer_r1 = malloc(locsiz + 1);
 				buffer_r1[locsiz] = '\0';	
 				pread(fd_in1, buffer_r1, locsiz, *curoff);
 				assert(strlen(buffer_r1) == locsiz);
@@ -723,7 +729,7 @@ int main(int argc, char *argv[]) {
 				assert (total_chucks_sz == totsiz);
 			}
 			else{
-				
+				/* in case a rank has nothing to process it writes nothing*/
 				filsiz = 0;
 				totsiz = 0;
 				res = MPI_Type_size(MPI_OFFSET, &c);
@@ -733,7 +739,7 @@ int main(int argc, char *argv[]) {
 				c = 0;
 				coff[c++] = 0;
 				coff[c++] = 0;	
-				//c++;								
+				buffer_r1 = NULL;								
 			}
 			MPI_Barrier(MPI_COMM_WORLD);
 			total_chuncks += c;
@@ -745,8 +751,7 @@ int main(int argc, char *argv[]) {
 			assert(res == MPI_SUCCESS);
 			assert(count == c);
 			free(coff);
-			if (locsiz != 0) free(buffer_r1);	
-			
+			if (buffer_r1 != NULL) free(buffer_r1);	
 			res = MPI_Allreduce(&totsiz, &filsiz, 1, MPI_LONG_LONG_INT, MPI_SUM, MPI_COMM_WORLD);
 			assert(res == MPI_SUCCESS);			
 			total_window_sz += window_sz;	
