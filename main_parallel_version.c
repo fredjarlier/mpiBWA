@@ -823,7 +823,7 @@ int main(int argc, char *argv[]) {
 			res = MPI_Get_count(&status, MPI_OFFSET, &count);
 			assert(res == MPI_SUCCESS);
 			//if ( coff[0] < previous_offset_chunck ) break;
-			//if ( coff[1] == 0 ) break;
+			if ( coff[1] == 0 ) break;
 			//fprintf(stderr, "%s: rank %d : read offset[0] = %zu\n", __func__, rank_num, coff[0] );
 			//fprintf(stderr, "%s: rank %d : read offset[1] = %zu\n", __func__, rank_num, coff[1] );
 			if (count == 0) break;
