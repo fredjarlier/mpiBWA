@@ -1,3 +1,7 @@
+The project has moved here:
+
+https://github.com/bioinfo-pf-curie/mpiBWA
+
 Your are in the master branch of the mpiBWA project.
 
 We recommand you to go to the Experimental branch (git checkout Experimental + git pull). 
